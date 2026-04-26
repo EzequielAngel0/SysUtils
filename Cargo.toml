@@ -1,0 +1,58 @@
+[package]
+name = "sysutils_native"
+version = "1.0.0"
+edition = "2021"
+description = "SysUtils — Hardware utility system"
+
+[dependencies]
+# GUI Framework (100% Rust)
+eframe = { version = "0.31", features = ["persistence"] }
+egui = "0.31"
+egui_extras = "0.31"
+
+# Serial Port Communication (ESP32)
+serialport = "4.7"
+
+# Global Hotkeys / Input hooks
+rdev = "0.5"
+
+# Image processing
+image = "0.25"
+
+# Async & Threading
+crossbeam-channel = "0.5"
+
+# Serialization (save/load configs & macros)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Random numbers (for humanized delays)
+rand = "0.8"
+
+# System tray icon
+tray-icon = "0.19"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "chrono"] }
+tracing-appender = "0.2"
+
+# System info (CPU/RAM/process scan)
+sysinfo = "0.33"
+
+# Time utilities
+chrono = "0.4"
+xcap = "0.9.4"
+
+# Windows-specific: hide console window in release builds
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winuser", "wincon"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
