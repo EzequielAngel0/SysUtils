@@ -1,1 +1,49 @@
-/target
+# ─── Rust build artifacts ────────────────────────────────────────────────────
+/target/
+Cargo.lock.bak
+
+# ─── Runtime data files (generated next to the executable) ───────────────────
+sysutils_config.json
+sysutils_profile_*.json
+sysutils_sequence.json
+phantom_logs/
+
+# ─── IDE / Editor ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+*.suo
+*.user
+.vs/
+
+# ─── Windows ─────────────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ─── macOS ───────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ─── Linux ───────────────────────────────────────────────────────────────────
+*~
+.fuse_hidden*
+
+# ─── Compiled / distributable artifacts ──────────────────────────────────────
+*.exe
+*.zip
+*.tar.gz
+dist/
+release/
+# ─── Environment / secrets ───────────────────────────────────────────────────
+.env
+.env.local
+secrets.toml
+
+# ─── Kiro AI workspace settings (keep specs, ignore local IDE state) ─────────
+.kiro/settings/
+
+CLAUDE.md
+KIRO.md

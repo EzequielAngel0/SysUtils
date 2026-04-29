@@ -1,6 +1,7 @@
 use crate::app::SysUtilsApp;
 use crate::models::{MacroEvent, LogLevel};
 use crate::logic::sequence::SequenceLogic;
+use crate::logic::hardware::HardwareLogic;
 use eframe::egui;
 
 impl SysUtilsApp {
@@ -8,6 +9,14 @@ impl SysUtilsApp {
         ui.heading(egui::RichText::new("🎬 Sequence Flow").size(18.0).color(egui::Color32::from_rgb(255, 180, 80)));
         ui.label(egui::RichText::new("Graba y reproduce secuencias de teclado y ratón").size(11.0).color(egui::Color32::from_rgb(120, 120, 140)));
         ui.add_space(12.0);
+
+        let running = self.sequence_recording || self.sequence_playing;
+
+        if running {
+            ui.label(egui::RichText::new("⚠ Detén el módulo para modificar la configuración.")
+                .size(11.0).color(egui::Color32::from_rgb(220, 180, 60)));
+            ui.add_space(4.0);
+        }
 
         // ── Controls row ─────────────────────────────────────────────────────
         ui.horizontal(|ui| {
@@ -40,7 +49,20 @@ impl SysUtilsApp {
 
         ui.add_space(8.0);
 
-        // ── Loops ────────────────────────────────────────────────────────────
+        // ── Loop counter display (F5) ─────────────────────────────────────────
+        if self.sequence_playing {
+            let current = *self.sequence_loop_counter.lock().unwrap();
+            let total: u32 = self.sequence_loops.parse().unwrap_or(1);
+            let label = if total == 0 {
+                format!("Loop: {} / ∞", current)
+            } else {
+                format!("Loop: {} / {}", current, total)
+            };
+            ui.label(egui::RichText::new(label).size(12.0).strong().color(egui::Color32::from_rgb(80, 220, 120)));
+        }
+
+        ui.add_space(8.0);
+        ui.add_enabled_ui(!running, |ui| {
         ui.horizontal(|ui| {
             ui.label("Loops:");
             ui.add_sized([50.0, 20.0], egui::TextEdit::singleline(&mut self.sequence_loops));
@@ -51,6 +73,8 @@ impl SysUtilsApp {
         // ── Hotkey Grabar ────────────────────────────────────────────────────
         ui.horizontal(|ui| {
             ui.label("Hotkey Grabar:");
+            
+            let is_valid = crate::hotkey_engine::HotkeyEngine::is_valid_key(&self.config.sequence_hotkey_record);
             let hotkey_record_text = if self.config.sequence_hotkey_record.is_empty() {
                 "Ninguna".to_string()
             } else {
@@ -60,10 +84,31 @@ impl SysUtilsApp {
             let btn_record_text = if is_assigning_record { "Presiona tecla..." } else { &hotkey_record_text };
             let btn_record_color = if is_assigning_record { egui::Color32::from_rgb(255, 200, 100) } else { egui::Color32::WHITE };
 
-            if ui.add_sized([120.0, 20.0], egui::Button::new(
-                egui::RichText::new(btn_record_text).color(btn_record_color)
-            )).clicked() {
-                self.assigning_hotkey_for = Some("sequence_record".to_string());
+            let mut frame = egui::Frame::new();
+            if !is_valid {
+                frame = frame.fill(egui::Color32::from_rgba_premultiplied(200, 60, 60, 40));
+            }
+            
+            frame.show(ui, |ui| {
+                let mut btn = ui.add_sized([120.0, 20.0], egui::Button::new(
+                    egui::RichText::new(btn_record_text).color(btn_record_color)
+                ));
+                
+                if !is_valid {
+                    btn = btn.on_hover_text("Hotkey inválida — usa formato: F6, Ctrl+F6, MouseLeft");
+                }
+                
+                if btn.clicked() {
+                    self.start_assigning_hotkey("sequence_record");
+                }
+            });
+            
+            // Clear button
+            let clear_btn = ui.add_enabled(!self.config.sequence_hotkey_record.is_empty(), egui::Button::new("✕"));
+            if clear_btn.on_hover_text("Quitar hotkey").clicked() {
+                self.config.sequence_hotkey_record.clear();
+                self.apply_hotkeys();
+                self.mark_dirty();
             }
         });
         ui.label(egui::RichText::new("  Haz clic para asignar la tecla de grabar. Soporta ratón y teclado.").size(10.0).color(egui::Color32::from_rgb(120, 120, 140)));
@@ -72,6 +117,8 @@ impl SysUtilsApp {
         // ── Hotkey Reproducir ────────────────────────────────────────────────
         ui.horizontal(|ui| {
             ui.label("Hotkey Reproducir:");
+            
+            let is_valid = crate::hotkey_engine::HotkeyEngine::is_valid_key(&self.config.sequence_hotkey_play);
             let hotkey_play_text = if self.config.sequence_hotkey_play.is_empty() {
                 "Ninguna".to_string()
             } else {
@@ -81,15 +128,51 @@ impl SysUtilsApp {
             let btn_play_text = if is_assigning_play { "Presiona tecla..." } else { &hotkey_play_text };
             let btn_play_color = if is_assigning_play { egui::Color32::from_rgb(255, 200, 100) } else { egui::Color32::WHITE };
 
-            if ui.add_sized([120.0, 20.0], egui::Button::new(
-                egui::RichText::new(btn_play_text).color(btn_play_color)
-            )).clicked() {
-                self.assigning_hotkey_for = Some("sequence_play".to_string());
+            let mut frame = egui::Frame::new();
+            if !is_valid {
+                frame = frame.fill(egui::Color32::from_rgba_premultiplied(200, 60, 60, 40));
+            }
+            
+            frame.show(ui, |ui| {
+                let mut btn = ui.add_sized([120.0, 20.0], egui::Button::new(
+                    egui::RichText::new(btn_play_text).color(btn_play_color)
+                ));
+                
+                if !is_valid {
+                    btn = btn.on_hover_text("Hotkey inválida — usa formato: F6, Ctrl+F6, MouseLeft");
+                }
+                
+                if btn.clicked() {
+                    self.start_assigning_hotkey("sequence_play");
+                }
+            });
+            
+            // Clear button
+            let clear_btn = ui.add_enabled(!self.config.sequence_hotkey_play.is_empty(), egui::Button::new("✕"));
+            if clear_btn.on_hover_text("Quitar hotkey").clicked() {
+                self.config.sequence_hotkey_play.clear();
+                self.apply_hotkeys();
+                self.mark_dirty();
             }
         });
         ui.label(egui::RichText::new("  Haz clic para asignar la tecla de reproducir. Soporta ratón y teclado.").size(10.0).color(egui::Color32::from_rgb(120, 120, 140)));
+        }); // end add_enabled_ui(!running)
 
         ui.add_space(8.0);
+
+        // ── Acciones ─────────────────────────────────────────────────────────
+        ui.horizontal(|ui| {
+            // Botón Aplicar Config (siempre visible)
+            if ui.add_sized([160.0, 36.0], egui::Button::new(
+                egui::RichText::new("Aplicar Config").size(13.0).color(egui::Color32::WHITE)
+            ).fill(egui::Color32::from_rgb(60, 40, 140))).clicked() {
+                self.config.save();
+                self.apply_hotkeys();
+                self.set_status("✓ Config aplicada");
+            }
+        });
+
+        ui.add_space(4.0);
 
         // ── Save / Load / Clear ──────────────────────────────────────────────
         ui.horizontal(|ui| {

@@ -189,15 +189,22 @@ impl SequenceLogic for SysUtilsApp {
         let hw = self.hw.clone();
         let stop_flag = self.sequence_play_stop.clone();
         let logs = self.logs.clone();
+        let loop_counter = self.sequence_loop_counter.clone();
 
         logs.log(LogLevel::Action, "Sequence", &format!("Reproduciendo {} eventos x{} veces", events.len(), loops));
 
         std::thread::spawn(move || {
             let actual_loops = if loops == 0 { u32::MAX } else { loops };
+            *loop_counter.lock().unwrap() = 0;
 
             for lap in 0..actual_loops {
                 if *stop_flag.lock().unwrap() { break; }
+                *loop_counter.lock().unwrap() = lap + 1;
                 logs.log(LogLevel::Info, "Sequence", &format!("Loop {}/{}", lap + 1, if loops == 0 { "∞".to_string() } else { loops.to_string() }));
+
+                let mut last_x = 0i32;
+                let mut last_y = 0i32;
+                let mut first_move = true;
 
                 for evt in &events {
                     if *stop_flag.lock().unwrap() { break; }
@@ -219,8 +226,19 @@ impl SequenceLogic for SysUtilsApp {
                             let btn = extract_mouse_btn(b);
                             let _ = hw.send(&format!("CLK_UP:{}", btn));
                         }
-                        MacroEvent::MouseMove(_, _) => {
-                            // Mouse move via ESP32 is relative — skip absolute moves
+                        MacroEvent::MouseMove(x, y) => {
+                            if first_move {
+                                last_x = *x;
+                                last_y = *y;
+                                first_move = false;
+                                let _ = hw.send("MOUSE_MOVE_REL:0:0");
+                            } else {
+                                let dx = x - last_x;
+                                let dy = y - last_y;
+                                let _ = hw.send(&format!("MOUSE_MOVE_REL:{}:{}", dx, dy));
+                                last_x = *x;
+                                last_y = *y;
+                            }
                         }
                         MacroEvent::Delay(ms) => {
                             std::thread::sleep(Duration::from_millis(*ms));

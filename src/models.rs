@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -42,14 +43,14 @@ pub struct LogEntry {
 
 #[derive(Clone)]
 pub struct LogBuffer {
-    pub entries: Arc<Mutex<Vec<LogEntry>>>,
+    pub entries: Arc<Mutex<VecDeque<LogEntry>>>,
     max_entries: usize,
 }
 
 impl LogBuffer {
     pub fn new(max: usize) -> Self {
         Self {
-            entries: Arc::new(Mutex::new(Vec::with_capacity(max))),
+            entries: Arc::new(Mutex::new(VecDeque::with_capacity(max))),
             max_entries: max,
         }
     }
@@ -64,13 +65,13 @@ impl LogBuffer {
         };
         let mut entries = self.entries.lock().unwrap();
         if entries.len() >= self.max_entries {
-            entries.remove(0);
+            entries.pop_front();
         }
-        entries.push(entry);
+        entries.push_back(entry);
     }
 
     pub fn get_all(&self) -> Vec<LogEntry> {
-        self.entries.lock().unwrap().clone()
+        self.entries.lock().unwrap().iter().cloned().collect()
     }
 
     pub fn clear(&self) {

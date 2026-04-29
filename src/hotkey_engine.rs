@@ -47,6 +47,32 @@ impl HotkeyEngine {
         }
     }
 
+    /// Validate if a key string is a valid hotkey format
+    pub fn is_valid_key(key_str: &str) -> bool {
+        if key_str.is_empty() {
+            return true; // Empty is valid
+        }
+
+        // Parse modifiers and key
+        let parts: Vec<&str> = key_str.split('+').collect();
+        let key_part = parts.last().unwrap_or(&"");
+
+        // Check if key_part is a valid key name
+        matches!(
+            *key_part,
+            "F1" | "F2" | "F3" | "F4" | "F5" | "F6" | "F7" | "F8" | "F9" | "F10" | "F11" | "F12" |
+            "Escape" | "Space" | "Return" | "Tab" | "Backspace" | "Delete" | "Insert" |
+            "Home" | "End" | "PageUp" | "PageDown" |
+            "Up" | "Down" | "Left" | "Right" |
+            "MouseLeft" | "MouseRight" | "MouseMiddle" |
+            "ControlLeft" | "ControlRight" | "ShiftLeft" | "ShiftRight" | "AltLeft" | "AltRight" |
+            "MetaLeft" | "MetaRight" | "CapsLock" | "NumLock" | "ScrollLock" |
+            "PrintScreen" | "Pause" |
+            "Num0" | "Num1" | "Num2" | "Num3" | "Num4" | "Num5" | "Num6" | "Num7" | "Num8" | "Num9" |
+            "NumpadAdd" | "NumpadSubtract" | "NumpadMultiply" | "NumpadDivide" | "NumpadDecimal" | "NumpadEnter"
+        ) || (key_part.len() == 1 && key_part.chars().next().unwrap().is_alphanumeric())
+    }
+
     /// Register a new hotkey binding
     pub fn register(&self, id: &str, trigger: &str) {
         let binding = HotkeyBinding {

@@ -1,6 +1,7 @@
 use crate::app::SysUtilsApp;
 use crate::models::LogLevel;
 use crate::logic::monitor::MonitorLogic;
+use crate::logic::hardware::HardwareLogic;
 use crate::screen_capture::ScreenCapture;
 use eframe::egui;
 
@@ -87,7 +88,28 @@ impl SysUtilsApp {
             let ref_h = *self.monitor_ref_height.lock().unwrap();
 
         if ref_w > 0 && ref_h > 0 {
-            // Build or update the texture
+            // F2: Check if preview generation changed and update texture
+            let current_gen = *self.monitor_preview_generation.lock().unwrap();
+            if self.monitor_preview_last_gen != current_gen {
+                // New frame available from preview thread
+                let preview_pixels = self.monitor_preview_pixels.lock().unwrap();
+                let preview_w = *self.monitor_preview_width.lock().unwrap();
+                let preview_h = *self.monitor_preview_height.lock().unwrap();
+                
+                if let Some(ref rgba) = *preview_pixels {
+                    if preview_w > 0 && preview_h > 0 {
+                        let image = egui::ColorImage::from_rgba_unmultiplied([preview_w, preview_h], rgba);
+                        self.monitor_preview_texture = Some(ui.ctx().load_texture(
+                            "monitor_preview",
+                            image,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                        self.monitor_preview_last_gen = current_gen;
+                    }
+                }
+            }
+            
+            // Build or update the texture (fallback to reference if no preview yet)
             if self.monitor_preview_texture.is_none() {
                 if let Some(ref rgba) = *ref_pixels {
                     let image = egui::ColorImage::from_rgba_unmultiplied([ref_w, ref_h], rgba);
@@ -315,6 +337,13 @@ impl SysUtilsApp {
         ui.label(egui::RichText::new("Configuración").size(14.0).strong().color(egui::Color32::from_rgb(200, 200, 220)));
         ui.add_space(4.0);
 
+        if self.monitor_active {
+            ui.label(egui::RichText::new("⚠ Detén el monitoreo para modificar la configuración.")
+                .size(11.0).color(egui::Color32::from_rgb(220, 180, 60)));
+            ui.add_space(4.0);
+        }
+
+        ui.add_enabled_ui(!self.monitor_active, |ui| {
         // ── Condición de monitoreo ────────────────────────────────────────────
         ui.horizontal(|ui| {
             ui.label("Condición:");
@@ -335,22 +364,16 @@ impl SysUtilsApp {
         if self.config.monitor_condition == "color_appear" || self.config.monitor_condition == "color_disappear" {
             ui.horizontal(|ui| {
                 ui.label("Color objetivo:");
-                ui.label(egui::RichText::new("R:").size(11.0));
-                let mut r = self.config.monitor_target_color_r as u32;
-                if ui.add(egui::DragValue::new(&mut r).range(0..=255)).changed() {
-                    self.config.monitor_target_color_r = r as u8;
-                    self.mark_dirty();
-                }
-                ui.label(egui::RichText::new("G:").size(11.0));
-                let mut g = self.config.monitor_target_color_g as u32;
-                if ui.add(egui::DragValue::new(&mut g).range(0..=255)).changed() {
-                    self.config.monitor_target_color_g = g as u8;
-                    self.mark_dirty();
-                }
-                ui.label(egui::RichText::new("B:").size(11.0));
-                let mut b = self.config.monitor_target_color_b as u32;
-                if ui.add(egui::DragValue::new(&mut b).range(0..=255)).changed() {
-                    self.config.monitor_target_color_b = b as u8;
+                // F4: Color picker widget
+                let mut color = [
+                    self.config.monitor_target_color_r as f32 / 255.0,
+                    self.config.monitor_target_color_g as f32 / 255.0,
+                    self.config.monitor_target_color_b as f32 / 255.0,
+                ];
+                if egui::color_picker::color_edit_button_rgb(ui, &mut color).changed() {
+                    self.config.monitor_target_color_r = (color[0] * 255.0) as u8;
+                    self.config.monitor_target_color_g = (color[1] * 255.0) as u8;
+                    self.config.monitor_target_color_b = (color[2] * 255.0) as u8;
                     self.mark_dirty();
                 }
                 // Color preview swatch
@@ -460,9 +483,14 @@ impl SysUtilsApp {
         }
         ui.add_space(6.0);
 
-        // ── Hotkey ───────────────────────────────────────────────────────────
+        }); // end add_enabled_ui(!monitor_active)
+
+        // ── Hotkey (bloqueada cuando activo) ──────────────────────────────────
+        ui.add_enabled_ui(!self.monitor_active, |ui| {
         ui.horizontal(|ui| {
             ui.label("Hotkey:");
+            
+            let is_valid = crate::hotkey_engine::HotkeyEngine::is_valid_key(&self.config.monitor_hotkey);
             let hotkey_text = if self.config.monitor_hotkey.is_empty() {
                 "Ninguna".to_string()
             } else {
@@ -472,27 +500,60 @@ impl SysUtilsApp {
             let btn_text = if is_assigning { "Presiona tecla..." } else { &hotkey_text };
             let btn_color = if is_assigning { egui::Color32::from_rgb(255, 200, 100) } else { egui::Color32::WHITE };
             
-            if ui.add_sized([120.0, 20.0], egui::Button::new(
-                egui::RichText::new(btn_text).color(btn_color)
-            )).clicked() {
-                self.assigning_hotkey_for = Some("monitor".to_string());
+            let mut frame = egui::Frame::new();
+            if !is_valid {
+                frame = frame.fill(egui::Color32::from_rgba_premultiplied(200, 60, 60, 40));
+            }
+            
+            frame.show(ui, |ui| {
+                let mut btn = ui.add_sized([120.0, 20.0], egui::Button::new(
+                    egui::RichText::new(btn_text).color(btn_color)
+                ));
+                
+                if !is_valid {
+                    btn = btn.on_hover_text("Hotkey inválida — usa formato: F6, Ctrl+F6, MouseLeft");
+                }
+                
+                if btn.clicked() {
+                    self.start_assigning_hotkey("monitor");
+                }
+            });
+            
+            // Clear button
+            let clear_btn = ui.add_enabled(!self.config.monitor_hotkey.is_empty(), egui::Button::new("✕"));
+            if clear_btn.on_hover_text("Quitar hotkey").clicked() {
+                self.config.monitor_hotkey.clear();
+                self.apply_hotkeys();
+                self.mark_dirty();
             }
         });
         ui.label(egui::RichText::new("  Haz clic para asignar una tecla. Soporta botones de ratón y teclado.").size(10.0).color(egui::Color32::from_rgb(120, 120, 140)));
+        }); // end hotkey add_enabled_ui
 
         ui.add_space(12.0);
 
-        // ── Start/Stop ──────────────────────────────────────────────────────────
-        let (text, btn_color) = if self.monitor_active {
-            ("⏹ DETENER MONITOREO", egui::Color32::from_rgb(200, 50, 50))
-        } else {
-            ("▶ INICIAR MONITOREO", egui::Color32::from_rgb(50, 130, 200))
-        };
-        if ui.add_sized([220.0, 40.0], egui::Button::new(
-            egui::RichText::new(text).size(14.0).strong().color(egui::Color32::WHITE)
-        ).fill(btn_color)).clicked() {
-            if self.monitor_active { self.stop_monitor(); }
-            else { self.config.save(); self.apply_hotkeys(); self.start_monitor(); }
-        }
+        // ── Acciones ─────────────────────────────────────────────────────────
+        ui.horizontal(|ui| {
+            // Botón Aplicar Config (siempre visible)
+            if ui.add_sized([160.0, 36.0], egui::Button::new(
+                egui::RichText::new("Aplicar Config").size(13.0).color(egui::Color32::WHITE)
+            ).fill(egui::Color32::from_rgb(60, 40, 140))).clicked() {
+                self.config.save();
+                self.apply_hotkeys();
+                self.set_status("✓ Config aplicada");
+            }
+
+            let (text, btn_color) = if self.monitor_active {
+                ("⏹ DETENER MONITOREO", egui::Color32::from_rgb(200, 50, 50))
+            } else {
+                ("▶ INICIAR MONITOREO", egui::Color32::from_rgb(50, 130, 200))
+            };
+            if ui.add_sized([220.0, 40.0], egui::Button::new(
+                egui::RichText::new(text).size(14.0).strong().color(egui::Color32::WHITE)
+            ).fill(btn_color)).clicked() {
+                if self.monitor_active { self.stop_monitor(); }
+                else { self.config.save(); self.apply_hotkeys(); self.start_monitor(); }
+            }
+        });
     }
 }

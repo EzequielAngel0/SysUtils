@@ -41,6 +41,14 @@ pub struct SysUtilsApp {
     pub monitor_pixel_color_str: String,
     pub monitor_drag_start: Option<eframe::egui::Pos2>,
     pub monitor_zoom: f32,
+    
+    // F2: Preview thread state
+    pub monitor_preview_pixels: Arc<Mutex<Option<Vec<u8>>>>,
+    pub monitor_preview_width: Arc<Mutex<usize>>,
+    pub monitor_preview_height: Arc<Mutex<usize>>,
+    pub monitor_preview_stop: Arc<Mutex<bool>>,
+    pub monitor_preview_generation: Arc<Mutex<u64>>,
+    pub monitor_preview_last_gen: u64,
 
     // Panic
     pub panic_active: bool,
@@ -57,10 +65,12 @@ pub struct SysUtilsApp {
     pub sequence_events: Arc<Mutex<Vec<MacroEvent>>>,
     pub sequence_loops: String,
     pub sequence_last_event_time: Arc<Mutex<Option<Instant>>>,
+    pub sequence_loop_counter: Arc<Mutex<u32>>,
 
     pub hotkeys: Arc<crate::hotkey_engine::HotkeyEngine>,
     pub log_auto_scroll: bool,
     pub assigning_hotkey_for: Option<String>,
+    pub hotkey_assign_start: Option<Instant>,
 
     // System monitoring (CPU/RAM/Anti-cheat)
     pub sys_monitor: SystemMonitor,
@@ -74,6 +84,11 @@ pub struct SysUtilsApp {
     // File logging
     #[allow(dead_code)]
     pub file_log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+
+    // F3: Profiles
+    pub available_profiles: Vec<String>,
+    pub profile_name_input: String,
+    pub show_save_profile_dialog: bool,
 }
 
 impl SysUtilsApp {
@@ -114,6 +129,9 @@ impl SysUtilsApp {
 
         let now = Instant::now();
 
+        // F3: Scan available profiles
+        let available_profiles = AppConfig::scan_profiles();
+
         let app_instance = Self {
             hw: Arc::new(HwLink::new()),
             logs,
@@ -143,6 +161,14 @@ impl SysUtilsApp {
             monitor_drag_start: None,
             monitor_pixel_color_str: String::new(),
             monitor_zoom: 1.0,
+            
+            // F2: Initialize preview thread state
+            monitor_preview_pixels: Arc::new(Mutex::new(None)),
+            monitor_preview_width: Arc::new(Mutex::new(0)),
+            monitor_preview_height: Arc::new(Mutex::new(0)),
+            monitor_preview_stop: Arc::new(Mutex::new(false)),
+            monitor_preview_generation: Arc::new(Mutex::new(0)),
+            monitor_preview_last_gen: 0,
 
             panic_active: false,
             panic_stop: Arc::new(Mutex::new(false)),
@@ -157,11 +183,13 @@ impl SysUtilsApp {
             sequence_events: Arc::new(Mutex::new(Vec::new())),
             sequence_loops: "1".into(),
             sequence_last_event_time: Arc::new(Mutex::new(None)),
+            sequence_loop_counter: Arc::new(Mutex::new(0)),
 
             config,
             hotkeys,
             log_auto_scroll: true,
             assigning_hotkey_for: None,
+            hotkey_assign_start: None,
 
             sys_monitor,
             last_sys_refresh: now,
@@ -171,6 +199,11 @@ impl SysUtilsApp {
             config_dirty: false,
 
             file_log_guard,
+
+            // F3: Initialize profile fields
+            available_profiles,
+            profile_name_input: String::new(),
+            show_save_profile_dialog: false,
         };
 
         app_instance.apply_hotkeys();
@@ -208,6 +241,13 @@ impl SysUtilsApp {
 
     pub fn mark_dirty(&mut self) {
         self.config_dirty = true;
+    }
+
+    /// Enter hotkey assignment mode for the given target.
+    /// Records the start time so the first click that triggered this is ignored.
+    pub fn start_assigning_hotkey(&mut self, target: &str) {
+        self.assigning_hotkey_for = Some(target.to_string());
+        self.hotkey_assign_start = Some(std::time::Instant::now());
     }
 
     /// Called from update() — auto-saves every 5 seconds if config is dirty

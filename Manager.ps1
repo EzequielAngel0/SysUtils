@@ -1,32 +1,36 @@
 <#
 .SYNOPSIS
-Manager interactivo para compilar, instalar o desinstalar Phantom.
+Manager interactivo para compilar, instalar o desinstalar SysUtils.
 #>
 
 $ErrorActionPreference = "Stop"
 
-$AppExeName = "Phantom.exe"
-$AppDataFolder = Join-Path $env:LOCALAPPDATA "Phantom"
-$PhantomExeDest = Join-Path $AppDataFolder $AppExeName
-$NativeDir = Join-Path $PSScriptRoot "phantom_native"
-$DesktopPath = [Environment]::GetFolderPath("Desktop")
+$AppName       = "SysUtils"
+$AppExeName    = "SysUtils.exe"
+$AppDataFolder = Join-Path $env:LOCALAPPDATA "SysUtils"
+$AppExeDest    = Join-Path $AppDataFolder $AppExeName
+# El .ps1 está dentro de phantom_native/, así que $PSScriptRoot ya ES el directorio del proyecto
+$NativeDir     = $PSScriptRoot
+$DesktopPath   = [Environment]::GetFolderPath("Desktop")
 $StartMenuPath = [Environment]::GetFolderPath("Programs")
 
 function Show-Menu {
     Clear-Host
     Write-Host "=========================================" -ForegroundColor Cyan
-    Write-Host "            PHANTOM MANAGER              " -ForegroundColor Cyan
+    Write-Host "              SYSUTILS                   " -ForegroundColor Cyan
     Write-Host "=========================================" -ForegroundColor Cyan
-    Write-Host "`n[1] Compilar y Probar (Modo Local)"
-    Write-Host "[2] Instalar Phantom (App Completa)"
-    Write-Host "[3] Desinstalar Phantom"
-    Write-Host "[4] Salir`n"
+    Write-Host ""
+    Write-Host "[1] Compilar y Probar (Modo Local)"
+    Write-Host "[2] Instalar SysUtils"
+    Write-Host "[3] Desinstalar SysUtils"
+    Write-Host "[4] Salir"
+    Write-Host ""
 }
 
 function Invoke-RunLocal {
-    Write-Host "`n[*] Compilando y ejecutando Phantom..." -ForegroundColor Yellow
+    Write-Host "`n[*] Compilando y ejecutando SysUtils..." -ForegroundColor Yellow
     Push-Location $NativeDir
-    $env:RUSTFLAGS="-C target-cpu=native"
+    $env:RUSTFLAGS = "-C target-cpu=native"
     cargo run --release
     Pop-Location
     Write-Host "`nPresiona ENTER para continuar..."
@@ -35,98 +39,104 @@ function Invoke-RunLocal {
 
 function Invoke-Install {
     if (-not (Get-Command "cargo" -ErrorAction SilentlyContinue)) {
-        Write-Host "Error: No se encontró 'cargo'. Instala Rust primero." -ForegroundColor Red
+        Write-Host "Error: No se encontro 'cargo'. Instala Rust primero." -ForegroundColor Red
         Read-Host "Presiona ENTER para continuar..."
         return
     }
 
-    Write-Host "`n[*] Deteniendo Phatom si está abierto..."
-    Stop-Process -Name "phantom_native" -Force -ErrorAction SilentlyContinue
-    Stop-Process -Name "Phantom" -Force -ErrorAction SilentlyContinue
+    Write-Host "`n[*] Deteniendo SysUtils si esta abierto..." -ForegroundColor Yellow
+    Stop-Process -Name "sysutils_native" -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name "SysUtils" -Force -ErrorAction SilentlyContinue
 
-    Write-Host "[*] Compilando Phantom Native con optimizaciones máximas..." -ForegroundColor Yellow
+    Write-Host "[*] Compilando con optimizaciones maximas..." -ForegroundColor Yellow
     Push-Location $NativeDir
-    $env:RUSTFLAGS="-C target-cpu=native"
+    $env:RUSTFLAGS = "-C target-cpu=native"
     cargo build --release
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Error en la compilación." -ForegroundColor Red
+        Write-Host "Error en la compilacion." -ForegroundColor Red
         Pop-Location
         Read-Host "Presiona ENTER para continuar..."
         return
     }
     Pop-Location
 
-    Write-Host "[*] Instalando motor base en AppData..." -ForegroundColor Yellow
+    Write-Host "[*] Instalando en AppData..." -ForegroundColor Yellow
     if (-not (Test-Path $AppDataFolder)) {
         New-Item -ItemType Directory -Path $AppDataFolder | Out-Null
     }
 
-    $CompiledExe = Join-Path $NativeDir "target\release\phantom_native.exe"
-    Copy-Item -Path $CompiledExe -Destination $PhantomExeDest -Force
-    
-    # Copiar Icono
+    # El binario compilado se llama sysutils_native.exe (nombre del crate)
+    $CompiledExe = Join-Path $NativeDir "target\release\sysutils_native.exe"
+    Copy-Item -Path $CompiledExe -Destination $AppExeDest -Force
+
+    # Copiar icono
     $SourceIcon = Join-Path $NativeDir "assets\icon.ico"
-    $DestIcon = Join-Path $AppDataFolder "icon.ico"
+    $DestIcon   = Join-Path $AppDataFolder "icon.ico"
     if (Test-Path $SourceIcon) {
         Copy-Item -Path $SourceIcon -Destination $DestIcon -Force
     }
 
-    Write-Host "[*] Generando accesos directos de Windows..." -ForegroundColor Yellow
-    $WshShell = New-Object -comObject WScript.Shell
+    Write-Host "[*] Generando accesos directos..." -ForegroundColor Yellow
+    $WshShell = New-Object -ComObject WScript.Shell
 
-    $ShortcutDesktop = $WshShell.CreateShortcut((Join-Path $DesktopPath "Phantom.lnk"))
-    $ShortcutDesktop.TargetPath = $PhantomExeDest
+    $ShortcutDesktop = $WshShell.CreateShortcut((Join-Path $DesktopPath "$AppName.lnk"))
+    $ShortcutDesktop.TargetPath       = $AppExeDest
     $ShortcutDesktop.WorkingDirectory = $AppDataFolder
-    $ShortcutDesktop.Description = "Phantom Automation"
+    $ShortcutDesktop.Description      = $AppName
     if (Test-Path $DestIcon) { $ShortcutDesktop.IconLocation = $DestIcon }
     $ShortcutDesktop.Save()
 
-    $ShortcutStart = $WshShell.CreateShortcut((Join-Path $StartMenuPath "Phantom.lnk"))
-    $ShortcutStart.TargetPath = $PhantomExeDest
+    $ShortcutStart = $WshShell.CreateShortcut((Join-Path $StartMenuPath "$AppName.lnk"))
+    $ShortcutStart.TargetPath       = $AppExeDest
     $ShortcutStart.WorkingDirectory = $AppDataFolder
-    $ShortcutStart.Description = "Phantom Automation"
+    $ShortcutStart.Description      = $AppName
     if (Test-Path $DestIcon) { $ShortcutStart.IconLocation = $DestIcon }
     $ShortcutStart.Save()
 
-    Write-Host "`n=========================================" -ForegroundColor Green
-    Write-Host " ¡Phantom se instaló correctamente!      " -ForegroundColor Green
+    Write-Host ""
     Write-Host "=========================================" -ForegroundColor Green
-    Read-Host "Presiona ENTER para volver al menú..."
+    Write-Host " SysUtils instalado correctamente        " -ForegroundColor Green
+    Write-Host " Acceso directo creado en el Escritorio  " -ForegroundColor Green
+    Write-Host "=========================================" -ForegroundColor Green
+    Read-Host "Presiona ENTER para volver al menu..."
 }
 
 function Invoke-Uninstall {
-    Write-Host "`n[*] Deteniendo Phantom si está activo..." -ForegroundColor Yellow
-    Stop-Process -Name "phantom_native" -Force -ErrorAction SilentlyContinue
-    Stop-Process -Name "Phantom" -Force -ErrorAction SilentlyContinue
+    Write-Host "`n[*] Deteniendo SysUtils..." -ForegroundColor Yellow
+    Stop-Process -Name "sysutils_native" -Force -ErrorAction SilentlyContinue
+    Stop-Process -Name "SysUtils" -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
 
-    Write-Host "[*] Limpiando archivos del sistema ($AppDataFolder)..." -ForegroundColor Yellow
+    Write-Host "[*] Eliminando archivos ($AppDataFolder)..." -ForegroundColor Yellow
     if (Test-Path $AppDataFolder) {
         Remove-Item -Path $AppDataFolder -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host "[*] Eliminando accesos directos..." -ForegroundColor Yellow
-    $deskLnk = Join-Path $DesktopPath "Phantom.lnk"
-    if (Test-Path $deskLnk) { Remove-Item -Path $deskLnk -Force -ErrorAction SilentlyContinue }
-
-    $startLnk = Join-Path $StartMenuPath "Phantom.lnk"
+    $deskLnk  = Join-Path $DesktopPath "$AppName.lnk"
+    $startLnk = Join-Path $StartMenuPath "$AppName.lnk"
+    if (Test-Path $deskLnk)  { Remove-Item -Path $deskLnk  -Force -ErrorAction SilentlyContinue }
     if (Test-Path $startLnk) { Remove-Item -Path $startLnk -Force -ErrorAction SilentlyContinue }
 
-    Write-Host "`n=========================================" -ForegroundColor Green
-    Write-Host " Phantom ha sido desinstalado. " -ForegroundColor Green
+    Write-Host ""
     Write-Host "=========================================" -ForegroundColor Green
-    Read-Host "Presiona ENTER para volver al menú..."
+    Write-Host " SysUtils desinstalado.                  " -ForegroundColor Green
+    Write-Host "=========================================" -ForegroundColor Green
+    Read-Host "Presiona ENTER para volver al menu..."
 }
 
 while ($true) {
     Show-Menu
-    $choice = Read-Host "Elige una opción"
-    
+    $choice = Read-Host "Elige una opcion"
+
     switch ($choice) {
         "1" { Invoke-RunLocal }
         "2" { Invoke-Install }
         "3" { Invoke-Uninstall }
         "4" { exit }
-        default { Write-Host "Opción inválida." -ForegroundColor Red; Start-Sleep -Seconds 1 }
+        default {
+            Write-Host "Opcion invalida." -ForegroundColor Red
+            Start-Sleep -Seconds 1
+        }
     }
 }

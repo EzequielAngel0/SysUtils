@@ -69,14 +69,25 @@ impl eframe::App for SysUtilsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(target) = self.assigning_hotkey_for.clone() {
             let mut pressed_key = None;
-            while let Ok(event) = self.hotkeys.raw_rx.try_recv() {
-                if let rdev::EventType::KeyPress(key) = event.event_type {
-                    pressed_key = Some(format!("{:?}", key));
-                    break;
-                } else if let rdev::EventType::ButtonPress(btn) = event.event_type {
-                    pressed_key = Some(format!("{:?}", btn));
-                    break;
+            // Wait at least 200ms after entering assign mode before accepting input.
+            // This prevents the mouse click that opened the dialog from being captured.
+            let ready = self.hotkey_assign_start
+                .map(|t| t.elapsed().as_millis() >= 200)
+                .unwrap_or(false);
+
+            if ready {
+                while let Ok(event) = self.hotkeys.raw_rx.try_recv() {
+                    if let rdev::EventType::KeyPress(key) = event.event_type {
+                        pressed_key = Some(format!("{:?}", key));
+                        break;
+                    } else if let rdev::EventType::ButtonPress(btn) = event.event_type {
+                        pressed_key = Some(format!("{:?}", btn));
+                        break;
+                    }
                 }
+            } else {
+                // Drain the channel while in the cooldown window so stale clicks don't queue up
+                while self.hotkeys.raw_rx.try_recv().is_ok() {}
             }
 
             if let Some(pk) = pressed_key {
@@ -92,6 +103,7 @@ impl eframe::App for SysUtilsApp {
                 self.mark_dirty();
                 self.apply_hotkeys();
                 self.assigning_hotkey_for = None;
+                self.hotkey_assign_start = None;
             }
 
             egui::Window::new("Asignando Hotkey")
@@ -106,8 +118,46 @@ impl eframe::App for SysUtilsApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("Cancelar").clicked() {
                                 self.assigning_hotkey_for = None;
+                                self.hotkey_assign_start = None;
                             }
                         });
+                    });
+                });
+        }
+
+        // F3: Save profile dialog
+        if self.show_save_profile_dialog {
+            egui::Window::new("Guardar Perfil")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    ui.label("Nombre del perfil:");
+                    ui.add_space(4.0);
+                    ui.text_edit_singleline(&mut self.profile_name_input);
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Guardar").clicked() && !self.profile_name_input.trim().is_empty() {
+                            let profile_name = self.profile_name_input.trim().to_string();
+                            match self.config.save_as_profile(&profile_name) {
+                                Ok(()) => {
+                                    self.available_profiles = config::AppConfig::scan_profiles();
+                                    self.config.active_profile = profile_name.clone();
+                                    self.config.save();
+                                    self.logs.log(models::LogLevel::Action, "Config", &format!("Perfil '{}' guardado", profile_name));
+                                    self.show_save_profile_dialog = false;
+                                    self.profile_name_input.clear();
+                                }
+                                Err(e) => {
+                                    self.logs.log(models::LogLevel::Error, "Config", &format!("Error guardando perfil: {}", e));
+                                }
+                            }
+                        }
+                        if ui.button("Cancelar").clicked() {
+                            self.show_save_profile_dialog = false;
+                            self.profile_name_input.clear();
+                        }
                     });
                 });
         }
@@ -137,7 +187,7 @@ impl eframe::App for SysUtilsApp {
                 ui.vertical_centered(|ui| {
                     ui.heading(
                         egui::RichText::new("⚙ SysUtils")
-                            .size(22.0)
+                            .size(20.0)
                             .color(egui::Color32::from_rgb(200, 200, 200))
                             .strong(),
                     );
@@ -451,6 +501,79 @@ impl eframe::App for SysUtilsApp {
                     self.connect();
                 }
 
+                // F3: Profile selection
+                ui.separator();
+                ui.label("Perfil:");
+                
+                egui::ComboBox::from_id_salt("profile_select")
+                    .selected_text(if self.config.active_profile.is_empty() { 
+                        "Default" 
+                    } else { 
+                        &self.config.active_profile 
+                    })
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(self.config.active_profile.is_empty(), "Default").clicked() {
+                            self.config.active_profile.clear();
+                            self.config.save();
+                        }
+                        
+                        for profile in &self.available_profiles.clone() {
+                            if ui.selectable_label(&self.config.active_profile == profile, profile).clicked() {
+                                match config::AppConfig::load_profile(profile) {
+                                    Ok(mut loaded) => {
+                                        loaded.active_profile = profile.clone();
+                                        self.config = loaded;
+                                        self.config.save();
+                                        self.apply_hotkeys();
+                                        self.logs.log(models::LogLevel::Action, "Config", &format!("Perfil '{}' cargado", profile));
+                                    }
+                                    Err(e) => {
+                                        self.logs.log(models::LogLevel::Error, "Config", &format!("Error cargando perfil: {}", e));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                
+                if ui.button("💾").on_hover_text("Guardar perfil actual").clicked() {
+                    self.show_save_profile_dialog = true;
+                }
+
+                // Overwrite active profile with current config
+                let overwrite_enabled = !self.config.active_profile.is_empty();
+                if ui.add_enabled(overwrite_enabled, egui::Button::new("↺"))
+                    .on_hover_text("Sobreescribir perfil activo con la configuración actual")
+                    .clicked()
+                {
+                    let profile_name = self.config.active_profile.clone();
+                    match self.config.save_as_profile(&profile_name) {
+                        Ok(()) => {
+                            self.logs.log(models::LogLevel::Action, "Config", &format!("Perfil '{}' sobreescrito", profile_name));
+                            self.set_status(&format!("✓ Perfil '{}' actualizado", profile_name));
+                        }
+                        Err(e) => {
+                            self.logs.log(models::LogLevel::Error, "Config", &format!("Error sobreescribiendo perfil: {}", e));
+                        }
+                    }
+                }
+
+                let delete_enabled = !self.config.active_profile.is_empty();
+                if ui.add_enabled(delete_enabled, egui::Button::new("🗑")).on_hover_text("Eliminar perfil actual").clicked() {
+                    let profile_to_delete = self.config.active_profile.clone();
+                    match config::AppConfig::delete_profile(&profile_to_delete) {
+                        Ok(()) => {
+                            self.available_profiles = config::AppConfig::scan_profiles();
+                            self.config.active_profile.clear();
+                            self.config.save();
+                            self.logs.log(models::LogLevel::Action, "Config", &format!("Perfil '{}' eliminado", profile_to_delete));
+                        }
+                        Err(e) => {
+                            self.logs.log(models::LogLevel::Error, "Config", &format!("Error eliminando: {}", e));
+                        }
+                    }
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let age = self.status_timestamp.elapsed().as_secs();
                     let alpha = if age < 5 { 255 } else { 120 };
@@ -550,7 +673,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1050.0, 700.0])
             .with_min_inner_size([800.0, 500.0])
-            .with_title("System Utilities"),
+            .with_title("SysUtils"),
         ..Default::default()
     };
 

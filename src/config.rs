@@ -71,6 +71,10 @@ pub struct AppConfig {
     // UI
     pub window_width: f32,
     pub window_height: f32,
+
+    // Profiles (F3)
+    #[serde(default)]
+    pub active_profile: String,
 }
 
 impl Default for AppConfig {
@@ -122,6 +126,7 @@ impl Default for AppConfig {
             file_logging_enabled: false,
             window_width: 1050.0,
             window_height: 700.0,
+            active_profile: String::new(),
         }
     }
 }
@@ -168,5 +173,65 @@ impl AppConfig {
             .map_err(|e| format!("Read error: {}", e))?;
         serde_json::from_str(&contents)
             .map_err(|e| format!("Parse error: {}", e))
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Profile Management (F3)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Get the path for a named profile
+    pub fn profile_path(name: &str) -> PathBuf {
+        let mut path = std::env::current_exe().unwrap_or_default();
+        path.pop();
+        path.push(format!("sysutils_profile_{}.json", name));
+        path
+    }
+
+    /// Save current config as a named profile
+    pub fn save_as_profile(&self, name: &str) -> Result<(), String> {
+        let path = Self::profile_path(name);
+        serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Serialize error: {}", e))
+            .and_then(|json| {
+                std::fs::write(path, json).map_err(|e| format!("Write error: {}", e))
+            })
+    }
+
+    /// Load a profile from file
+    pub fn load_profile(name: &str) -> Result<Self, String> {
+        let path = Self::profile_path(name);
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| format!("Read error: {}", e))?;
+        serde_json::from_str(&contents)
+            .map_err(|e| format!("Parse error: {}", e))
+    }
+
+    /// Delete a profile file
+    pub fn delete_profile(name: &str) -> Result<(), String> {
+        let path = Self::profile_path(name);
+        std::fs::remove_file(path)
+            .map_err(|e| format!("Delete error: {}", e))
+    }
+
+    /// Scan directory for available profiles
+    pub fn scan_profiles() -> Vec<String> {
+        let mut profiles = Vec::new();
+        let exe_dir = std::env::current_exe().unwrap_or_default();
+        let dir = exe_dir.parent().unwrap_or(std::path::Path::new("."));
+        
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with("sysutils_profile_") && name.ends_with(".json") {
+                        let profile_name = name
+                            .strip_prefix("sysutils_profile_").unwrap()
+                            .strip_suffix(".json").unwrap();
+                        profiles.push(profile_name.to_string());
+                    }
+                }
+            }
+        }
+        profiles.sort();
+        profiles
     }
 }

@@ -44,6 +44,39 @@ impl MonitorLogic for SysUtilsApp {
             }
             *status.lock().unwrap() = "Error: no se pudo capturar".into();
         });
+        
+        // Start preview thread (F2)
+        *self.monitor_preview_stop.lock().unwrap() = false;
+        
+        let preview_pixels = self.monitor_preview_pixels.clone();
+        let preview_w = self.monitor_preview_width.clone();
+        let preview_h = self.monitor_preview_height.clone();
+        let preview_stop = self.monitor_preview_stop.clone();
+        let preview_gen = self.monitor_preview_generation.clone();
+        let target_id = self.monitor_target_id;
+        let is_window = self.monitor_is_window;
+        let logs = self.logs.clone();
+        
+        std::thread::spawn(move || {
+            let mut capturer = ScreenCapture::new();
+            capturer.target_id = target_id;
+            capturer.is_window = is_window;
+            
+            loop {
+                if *preview_stop.lock().unwrap() { break; }
+                
+                if let Some(frame) = capturer.capture_frame() {
+                    *preview_w.lock().unwrap() = frame.width() as usize;
+                    *preview_h.lock().unwrap() = frame.height() as usize;
+                    *preview_pixels.lock().unwrap() = Some(frame.into_raw());
+                    *preview_gen.lock().unwrap() += 1;
+                } else {
+                    logs.log(LogLevel::Warning, "Monitor", "Preview capture failed");
+                }
+                
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        });
     }
 
     fn start_monitor(&mut self) {
@@ -105,7 +138,7 @@ impl MonitorLogic for SysUtilsApp {
                 }
             };
             
-            let baseline_img = match image::RgbaImage::from_raw(ref_width as u32, ref_height as u32, reference_bytes) {
+            let mut baseline_img = match image::RgbaImage::from_raw(ref_width as u32, ref_height as u32, reference_bytes) {
                 Some(img) => img,
                 None => {
                     *status.lock().unwrap() = "Error: buffer de referencia inválido".into();
@@ -176,6 +209,7 @@ impl MonitorLogic for SysUtilsApp {
                         "color_disappear" => {
                             match monitor_mode.as_str() {
                                 "PIXEL" => {
+                                    // PIXEL mode: fixed reference (no sliding)
                                     if let Some(cp) = ScreenCapture::get_pixel_color(&current_img, pixel_x, pixel_y) {
                                         // Was close to target in reference, now it's different
                                         if let Some(bp) = ScreenCapture::get_pixel_color(&baseline_img, pixel_x, pixel_y) {
@@ -184,18 +218,38 @@ impl MonitorLogic for SysUtilsApp {
                                     } else { false }
                                 }
                                 "REGION" => {
-                                    let was_present = has_color_in_region(&baseline_img, &target_color, color_tolerance,
-                                        region_x, region_y, region_w, region_h, sample_step);
+                                    // REGION mode: sliding reference
                                     let is_present = has_color_in_region(&current_img, &target_color, color_tolerance,
                                         region_x, region_y, region_w, region_h, sample_step);
-                                    was_present && !is_present
+                                    
+                                    if is_present {
+                                        // Color IS present → update sliding reference
+                                        baseline_img = current_img.clone();
+                                        logs.log(LogLevel::Info, "Monitor", "Referencia actualizada (color presente)");
+                                        false  // Don't trigger yet
+                                    } else {
+                                        // Color is NOT present → check if it WAS present in baseline
+                                        let was_present = has_color_in_region(&baseline_img, &target_color, color_tolerance,
+                                            region_x, region_y, region_w, region_h, sample_step);
+                                        was_present  // Trigger if it disappeared
+                                    }
                                 }
                                 _ => {
-                                    let was_present = has_color_in_region(&baseline_img, &target_color, color_tolerance,
-                                        0, 0, ref_width, ref_height, sample_step);
+                                    // FULLSCREEN mode: sliding reference
                                     let is_present = has_color_in_region(&current_img, &target_color, color_tolerance,
                                         0, 0, ref_width, ref_height, sample_step);
-                                    was_present && !is_present
+                                    
+                                    if is_present {
+                                        // Color IS present → update sliding reference
+                                        baseline_img = current_img.clone();
+                                        logs.log(LogLevel::Info, "Monitor", "Referencia actualizada (color presente)");
+                                        false  // Don't trigger yet
+                                    } else {
+                                        // Color is NOT present → check if it WAS present in baseline
+                                        let was_present = has_color_in_region(&baseline_img, &target_color, color_tolerance,
+                                            0, 0, ref_width, ref_height, sample_step);
+                                        was_present  // Trigger if it disappeared
+                                    }
                                 }
                             }
                         }
@@ -241,6 +295,7 @@ impl MonitorLogic for SysUtilsApp {
 
     fn stop_monitor(&mut self) {
         *self.monitor_stop.lock().unwrap() = true;
+        *self.monitor_preview_stop.lock().unwrap() = true; // F2: Stop preview thread
         self.monitor_active = false;
         self.config.monitor_enabled = false;
         self.logs.log(LogLevel::Action, "Monitor", "Detenido");
