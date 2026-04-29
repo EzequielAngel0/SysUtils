@@ -67,6 +67,7 @@ impl PanicLogic for SysUtilsApp {
         let threshold = self.config.panic_threshold;
         let check_interval = self.config.panic_check_interval_ms;
         let reference = self.panic_reference_pixels.lock().unwrap().clone();
+        let notification_service = self.notification_service.clone();
 
         std::thread::spawn(move || {
             let baseline = match reference {
@@ -100,6 +101,7 @@ impl PanicLogic for SysUtilsApp {
                         let _ = hw.send("STOP");
                         let _ = hw.send("CLK_UP:L");
                         let _ = hw.send("CLK_UP:R");
+                        notification_service.notify(crate::notifications::NotificationEvent::PanicTriggered { diff: diff.avg_diff });
                         *panic_status.lock().unwrap() = format!("⚠ ALERTA (diff: {:.1})", diff.avg_diff);
                         std::thread::sleep(Duration::from_secs(5));
                         *panic_status.lock().unwrap() = "🛡 Vigilando...".into();

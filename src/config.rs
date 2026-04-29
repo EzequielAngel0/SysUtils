@@ -75,6 +75,24 @@ pub struct AppConfig {
     // Profiles (F3)
     #[serde(default)]
     pub active_profile: String,
+
+    // Notifications
+    #[serde(default)]
+    pub notifications_enabled: bool,
+    #[serde(default = "default_true")]
+    pub notify_on_panic: bool,
+    #[serde(default = "default_true")]
+    pub notify_on_disconnect: bool,
+    #[serde(default)]
+    pub notify_on_module_toggle: bool,
+
+    // Stealth
+    #[serde(default)]
+    pub stealth_enabled: bool,
+    #[serde(default = "default_window_title")]
+    pub stealth_window_title: String,
+    #[serde(default = "default_process_name")]
+    pub stealth_process_name: String,
 }
 
 impl Default for AppConfig {
@@ -127,9 +145,24 @@ impl Default for AppConfig {
             window_width: 1050.0,
             window_height: 700.0,
             active_profile: String::new(),
+            notifications_enabled: false,
+            notify_on_panic: true,
+            notify_on_disconnect: true,
+            notify_on_module_toggle: false,
+            stealth_enabled: false,
+            stealth_window_title: default_window_title(),
+            stealth_process_name: default_process_name(),
         }
     }
 }
+
+// ─── serde default helpers ───────────────────────────────────────────────────
+
+fn default_true() -> bool { true }
+fn default_window_title() -> String { "System Configuration".to_string() }
+fn default_process_name() -> String { "svchost".to_string() }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 impl AppConfig {
     fn config_path() -> PathBuf {

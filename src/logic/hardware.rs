@@ -44,9 +44,14 @@ impl HardwareLogic for SysUtilsApp {
     }
 
     fn disconnect(&mut self) {
+        let was_connected = self.hw.is_connected();
+        let port = self.selected_port.clone();
         self.hw.disconnect();
         self.pulse_active = false;
         self.set_status("Desconectado");
         self.logs.log(LogLevel::Info, "Serial", "Desconectado");
+        if was_connected {
+            self.notification_service.notify(crate::notifications::NotificationEvent::Esp32Disconnected { port });
+        }
     }
 }

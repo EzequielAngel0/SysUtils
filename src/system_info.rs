@@ -5,7 +5,8 @@
 use sysinfo::System;
 use std::sync::{Arc, Mutex};
 
-/// Known anti-cheat process names (lowercase)
+/// Known anti-cheat process names (lowercase) — Windows
+#[cfg(windows)]
 const ANTICHEAT_PROCESSES: &[(&str, &str)] = &[
     ("easyanticheat", "EasyAntiCheat (EAC)"),
     ("easyanticheat_eos", "EasyAntiCheat EOS"),
@@ -22,6 +23,24 @@ const ANTICHEAT_PROCESSES: &[(&str, &str)] = &[
     ("mhyprot", "miHoYo Protect"),
     ("atvi-pillbox", "Ricochet (Activision)"),
 ];
+
+/// Known anti-cheat process names (lowercase) — Linux (incluye variantes Wine y sin .exe)
+#[cfg(target_os = "linux")]
+const ANTICHEAT_PROCESSES: &[(&str, &str)] = &[
+    ("easyanticheat", "EasyAntiCheat (EAC/Wine)"),
+    ("beclient", "BattlEye Client (Wine)"),
+    ("beservice", "BattlEye Service"),
+    ("wine-preloader", "Wine (posible AC)"),
+    ("vgc", "Riot Vanguard (Wine)"),
+    ("faceitclient", "FACEIT Anti-Cheat (Wine)"),
+    ("equ8", "EQU8 Anti-Cheat"),
+    ("gameguard", "GameGuard (Wine)"),
+    ("mhyprot", "miHoYo Protect (Wine)"),
+];
+
+/// Fallback para otras plataformas (macOS, etc.)
+#[cfg(not(any(windows, target_os = "linux")))]
+const ANTICHEAT_PROCESSES: &[(&str, &str)] = &[];
 
 pub struct SystemInfo {
     sys: System,

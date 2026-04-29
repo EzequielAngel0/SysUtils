@@ -11,7 +11,9 @@ mod hotkey_engine;
 mod hw_link;
 mod logic;
 mod models;
+mod notifications;
 mod screen_capture;
+mod stealth;
 mod system_info;
 mod ui;
 
@@ -34,14 +36,22 @@ impl SysUtilsApp {
                 hotkey_engine::HotkeyEvent::Triggered(id) => {
                     if id == "pulse_toggle" {
                         self.toggle_pulse();
+                        let active = self.pulse_active;
+                        self.notification_service.notify(crate::notifications::NotificationEvent::ModuleToggled { module: "Scheduler", active });
                     } else if id == "keepalive_toggle" {
                         if self.keepalive_active { self.stop_keepalive(); }
                         else { self.config.save(); self.start_keepalive(); }
+                        let active = self.keepalive_active;
+                        self.notification_service.notify(crate::notifications::NotificationEvent::ModuleToggled { module: "Background", active });
                     } else if id == "monitor_toggle" {
                         if self.monitor_active { self.stop_monitor(); }
                         else { self.config.save(); self.start_monitor(); }
+                        let active = self.monitor_active;
+                        self.notification_service.notify(crate::notifications::NotificationEvent::ModuleToggled { module: "Diagnostics", active });
                     } else if id == "panic_toggle" {
                         self.toggle_panic();
+                        let active = self.panic_active;
+                        self.notification_service.notify(crate::notifications::NotificationEvent::ModuleToggled { module: "Security", active });
                     } else if id == "seq_record" {
                         if self.sequence_recording {
                             self.stop_recording();
@@ -165,6 +175,18 @@ impl eframe::App for SysUtilsApp {
         self.process_hotkeys();
         self.auto_save_tick();
         self.sys_info_tick();
+
+        // Stealth mode — aplicar solo cuando el estado cambia
+        if self.config.stealth_enabled != self.stealth_mode_applied {
+            let stealth_cfg = crate::stealth::StealthConfig {
+                enabled: self.config.stealth_enabled,
+                fake_window_title: self.config.stealth_window_title.clone(),
+                fake_process_name: self.config.stealth_process_name.clone(),
+            };
+            crate::stealth::StealthMode::apply(&stealth_cfg, ctx);
+            self.stealth_mode_applied = self.config.stealth_enabled;
+        }
+
         ctx.request_repaint_after(Duration::from_millis(33));
 
         // ── DARK THEME ──────────────────────────────────────────────────────────
@@ -356,6 +378,83 @@ impl eframe::App for SysUtilsApp {
                     ui.label(egui::RichText::new("⚠ Anti-Cheat").size(12.0).strong().color(egui::Color32::from_rgb(255, 120, 80)));
                     for w in &ac_warnings {
                         ui.label(egui::RichText::new(format!("• {}", w)).size(10.0).color(egui::Color32::from_rgb(255, 160, 110)));
+                    }
+                }
+
+                // Notificaciones
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("🔔 Notificaciones").size(12.0).color(egui::Color32::from_rgb(120, 120, 140)));
+                ui.add_space(4.0);
+
+                let mut notif_enabled = self.config.notifications_enabled;
+                if ui.checkbox(&mut notif_enabled, egui::RichText::new("Activar notificaciones").size(10.0)).changed() {
+                    self.config.notifications_enabled = notif_enabled;
+                    self.apply_hotkeys();
+                    self.mark_dirty();
+                }
+
+                if self.config.notifications_enabled {
+                    let mut on_panic = self.config.notify_on_panic;
+                    if ui.checkbox(&mut on_panic, egui::RichText::new("  Panic Switch").size(10.0)).changed() {
+                        self.config.notify_on_panic = on_panic;
+                        self.apply_hotkeys();
+                        self.mark_dirty();
+                    }
+                    let mut on_disc = self.config.notify_on_disconnect;
+                    if ui.checkbox(&mut on_disc, egui::RichText::new("  Desconexión ESP32").size(10.0)).changed() {
+                        self.config.notify_on_disconnect = on_disc;
+                        self.apply_hotkeys();
+                        self.mark_dirty();
+                    }
+                    let mut on_toggle = self.config.notify_on_module_toggle;
+                    if ui.checkbox(&mut on_toggle, egui::RichText::new("  Toggle de módulo").size(10.0)).changed() {
+                        self.config.notify_on_module_toggle = on_toggle;
+                        self.apply_hotkeys();
+                        self.mark_dirty();
+                    }
+                }
+
+                // Stealth
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("🕵 Stealth").size(12.0).color(egui::Color32::from_rgb(120, 120, 140)));
+                ui.add_space(4.0);
+
+                let mut stealth_en = self.config.stealth_enabled;
+                if ui.checkbox(&mut stealth_en, egui::RichText::new("Modo stealth").size(10.0)).changed() {
+                    self.config.stealth_enabled = stealth_en;
+                    self.mark_dirty();
+                }
+
+                if self.config.stealth_enabled {
+                    ui.label(egui::RichText::new("Título ventana:").size(10.0).color(egui::Color32::from_rgb(140, 140, 160)));
+                    let title_empty = self.config.stealth_window_title.is_empty();
+                    let title_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.config.stealth_window_title)
+                            .font(egui::TextStyle::Small)
+                            .desired_width(f32::INFINITY)
+                    );
+                    if title_resp.changed() { self.mark_dirty(); }
+                    // 8.3 Validación inline
+                    if title_empty {
+                        ui.label(egui::RichText::new("⚠ El título no puede estar vacío").size(9.0).color(egui::Color32::from_rgb(255, 120, 80)));
+                    }
+
+                    ui.label(egui::RichText::new("Nombre proceso (Linux):").size(10.0).color(egui::Color32::from_rgb(140, 140, 160)));
+                    let proc_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.config.stealth_process_name)
+                            .font(egui::TextStyle::Small)
+                            .desired_width(f32::INFINITY)
+                    );
+                    if proc_resp.changed() {
+                        // Truncar a 15 chars
+                        if self.config.stealth_process_name.len() > 15 {
+                            self.config.stealth_process_name.truncate(15);
+                        }
+                        self.mark_dirty();
                     }
                 }
 

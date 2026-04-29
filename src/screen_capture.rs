@@ -2,13 +2,12 @@
 // screen_capture.rs — High-speed screen and window capture using xcap and image
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use xcap::{Monitor, Window};
 use image::RgbaImage;
 
 /// Info about an available display or window
 #[derive(Debug, Clone)]
 pub struct TargetInfo {
-    pub id: usize, // Use u32 id derived from xcap id
+    pub id: usize,
     pub label: String,
     pub is_window: bool,
     #[allow(dead_code)]
@@ -43,29 +42,33 @@ impl PixelColor {
     }
 }
 
-pub struct ScreenCapture {
-    pub target_id: usize,
-    pub is_window: bool,
-    last_frame: Option<RgbaImage>,
+// ─── Backend trait ────────────────────────────────────────────────────────────
+
+pub trait ScreenCaptureBackend: Send {
+    fn list_displays(&self) -> Vec<TargetInfo>;
+    fn list_windows(&self) -> Vec<TargetInfo>;
+    fn capture_display(&self, id: usize) -> Option<RgbaImage>;
+    fn capture_window(&self, id: usize) -> Option<RgbaImage>;
 }
 
-impl ScreenCapture {
-    pub fn new() -> Self {
-        Self {
-            target_id: 0,
-            is_window: false,
-            last_frame: None,
-        }
-    }
+// ─── XcapBackend ─────────────────────────────────────────────────────────────
 
-    /// List all available displays
-    pub fn list_displays() -> Vec<TargetInfo> {
+pub struct XcapBackend;
+
+impl ScreenCaptureBackend for XcapBackend {
+    fn list_displays(&self) -> Vec<TargetInfo> {
+        use xcap::Monitor;
         let mut list = Vec::new();
         if let Ok(monitors) = Monitor::all() {
             for m in monitors {
                 list.push(TargetInfo {
                     id: m.id().unwrap_or(0) as usize,
-                    label: format!("🖥 Pantalla {} ({}x{})", m.id().unwrap_or(0), m.width().unwrap_or(0), m.height().unwrap_or(0)),
+                    label: format!(
+                        "🖥 Pantalla {} ({}x{})",
+                        m.id().unwrap_or(0),
+                        m.width().unwrap_or(0),
+                        m.height().unwrap_or(0)
+                    ),
                     is_window: false,
                     width: m.width().unwrap_or(0) as usize,
                     height: m.height().unwrap_or(0) as usize,
@@ -75,8 +78,8 @@ impl ScreenCapture {
         list
     }
 
-    /// List all available windows
-    pub fn list_windows() -> Vec<TargetInfo> {
+    fn list_windows(&self) -> Vec<TargetInfo> {
+        use xcap::Window;
         let mut list = Vec::new();
         if let Ok(windows) = Window::all() {
             for w in windows {
@@ -86,7 +89,11 @@ impl ScreenCapture {
                 if !title.is_empty() && width > 0 && height > 0 {
                     list.push(TargetInfo {
                         id: w.id().unwrap_or(0) as usize,
-                        label: format!("🪟 {} - {}", w.app_name().unwrap_or_default(), title),
+                        label: format!(
+                            "🪟 {} - {}",
+                            w.app_name().unwrap_or_default(),
+                            title
+                        ),
                         is_window: true,
                         width: width as usize,
                         height: height as usize,
@@ -97,34 +104,106 @@ impl ScreenCapture {
         list
     }
 
-    /// Capture a frame from the current target
-    pub fn capture_frame(&mut self) -> Option<RgbaImage> {
-        if self.is_window {
-            if let Ok(windows) = Window::all() {
-                if let Some(w) = windows.into_iter().find(|win| win.id().unwrap_or(0) as usize == self.target_id) {
-                    if let Ok(img) = w.capture_image() {
-                        self.last_frame = Some(img.clone());
-                        return Some(img);
-                    }
-                }
+    fn capture_display(&self, id: usize) -> Option<RgbaImage> {
+        use xcap::Monitor;
+        if let Ok(monitors) = Monitor::all() {
+            if let Some(m) = monitors.into_iter().find(|mon| mon.id().unwrap_or(0) as usize == id) {
+                return m.capture_image().ok();
             }
-        } else {
-            if let Ok(monitors) = Monitor::all() {
-                if let Some(m) = monitors.into_iter().find(|mon| mon.id().unwrap_or(0) as usize == self.target_id) {
-                    if let Ok(img) = m.capture_image() {
-                        self.last_frame = Some(img.clone());
-                        return Some(img);
-                    }
-                } else if let Some(m) = Monitor::all().ok().and_then(|mut mons| mons.pop()) {
-                     // Fallback to first
-                    if let Ok(img) = m.capture_image() {
-                        self.last_frame = Some(img.clone());
-                        return Some(img);
-                    }
+            // Fallback to any available monitor
+            if let Ok(mut mons) = Monitor::all() {
+                if let Some(m) = mons.pop() {
+                    return m.capture_image().ok();
                 }
             }
         }
         None
+    }
+
+    fn capture_window(&self, id: usize) -> Option<RgbaImage> {
+        use xcap::Window;
+        if let Ok(windows) = Window::all() {
+            if let Some(w) = windows.into_iter().find(|win| win.id().unwrap_or(0) as usize == id) {
+                return w.capture_image().ok();
+            }
+        }
+        None
+    }
+}
+
+// ─── ScapBackend (placeholder — feature flag) ─────────────────────────────────
+
+#[cfg(feature = "scap")]
+pub struct ScapBackend;
+
+#[cfg(feature = "scap")]
+impl ScreenCaptureBackend for ScapBackend {
+    fn list_displays(&self) -> Vec<TargetInfo> {
+        Vec::new()
+    }
+
+    fn list_windows(&self) -> Vec<TargetInfo> {
+        Vec::new()
+    }
+
+    fn capture_display(&self, _id: usize) -> Option<RgbaImage> {
+        None
+    }
+
+    fn capture_window(&self, _id: usize) -> Option<RgbaImage> {
+        None
+    }
+}
+
+// ─── ScreenCapture ────────────────────────────────────────────────────────────
+
+pub struct ScreenCapture {
+    pub target_id: usize,
+    pub is_window: bool,
+    backend: Box<dyn ScreenCaptureBackend>,
+}
+
+impl ScreenCapture {
+    pub fn new() -> Self {
+        #[cfg(feature = "scap")]
+        let backend: Box<dyn ScreenCaptureBackend> = Box::new(ScapBackend);
+        #[cfg(not(feature = "scap"))]
+        let backend: Box<dyn ScreenCaptureBackend> = Box::new(XcapBackend);
+
+        Self {
+            target_id: 0,
+            is_window: false,
+            backend,
+        }
+    }
+
+    /// Create a ScreenCapture with a custom backend (useful for testing)
+    #[allow(dead_code)]
+    pub fn with_backend(backend: Box<dyn ScreenCaptureBackend>) -> Self {
+        Self {
+            target_id: 0,
+            is_window: false,
+            backend,
+        }
+    }
+
+    /// List all available displays (delegates to XcapBackend by default)
+    pub fn list_displays() -> Vec<TargetInfo> {
+        XcapBackend.list_displays()
+    }
+
+    /// List all available windows (delegates to XcapBackend by default)
+    pub fn list_windows() -> Vec<TargetInfo> {
+        XcapBackend.list_windows()
+    }
+
+    /// Capture a frame from the current target
+    pub fn capture_frame(&mut self) -> Option<RgbaImage> {
+        if self.is_window {
+            self.backend.capture_window(self.target_id)
+        } else {
+            self.backend.capture_display(self.target_id)
+        }
     }
 
     pub fn get_pixel_color(frame: &RgbaImage, x: usize, y: usize) -> Option<PixelColor> {

@@ -89,6 +89,12 @@ pub struct SysUtilsApp {
     pub available_profiles: Vec<String>,
     pub profile_name_input: String,
     pub show_save_profile_dialog: bool,
+
+    // Notifications
+    pub notification_service: crate::notifications::NotificationService,
+
+    // Stealth
+    pub stealth_mode_applied: bool,
 }
 
 impl SysUtilsApp {
@@ -132,7 +138,10 @@ impl SysUtilsApp {
         // F3: Scan available profiles
         let available_profiles = AppConfig::scan_profiles();
 
-        let app_instance = Self {
+        // Notifications — must be created before config is moved into Self
+        let notification_service = crate::notifications::NotificationService::new(&config);
+
+        let mut app_instance = Self {
             hw: Arc::new(HwLink::new()),
             logs,
             active_tab: Tab::Pulse,
@@ -204,6 +213,9 @@ impl SysUtilsApp {
             available_profiles,
             profile_name_input: String::new(),
             show_save_profile_dialog: false,
+
+            notification_service,
+            stealth_mode_applied: false,
         };
 
         app_instance.apply_hotkeys();
@@ -217,7 +229,7 @@ impl SysUtilsApp {
         app_instance
     }
 
-    pub fn apply_hotkeys(&self) {
+    pub fn apply_hotkeys(&mut self) {
         self.hotkeys.clear_bindings();
         if !self.config.pulse_hotkey.is_empty() {
             self.hotkeys.register("pulse_toggle", &self.config.pulse_hotkey);
@@ -237,6 +249,7 @@ impl SysUtilsApp {
         if !self.config.sequence_hotkey_play.is_empty() {
             self.hotkeys.register("seq_play", &self.config.sequence_hotkey_play);
         }
+        self.notification_service.update_config(&self.config);
     }
 
     pub fn mark_dirty(&mut self) {

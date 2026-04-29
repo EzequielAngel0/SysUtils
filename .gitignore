@@ -47,3 +47,5 @@ secrets.toml
 
 CLAUDE.md
 KIRO.md
+
+.kiro/
